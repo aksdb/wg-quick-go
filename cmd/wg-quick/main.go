@@ -6,9 +6,9 @@ import (
 	"io/ioutil"
 	"os"
 
-	"github.com/sirupsen/logrus"
-	"github.com/aksdb/wg-quick-go"
+	wgquick "github.com/aksdb/wg-quick-go"
 	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 )
 
 func printHelp() {
@@ -28,13 +28,13 @@ func main() {
 		printHelp()
 	}
 
-	if *verbose {
-		logrus.SetLevel(logrus.DebugLevel)
-	}
+	setupLogger(*verbose)
 
 	iface := flag.Lookup("iface").Value.String()
-	logger := zap.NewExample()
-	log := logger.With(zap.String("iface", iface))
+	log := zap.L()
+	if iface != "" {
+		log = zap.L().With(zap.String("iface", iface))
+	}
 
 	cfg := args[1]
 
@@ -44,7 +44,7 @@ func main() {
 	case os.IsNotExist(err):
 		if iface == "" {
 			iface = cfg
-			log = logger.With(zap.String("iface", iface))
+			log = zap.L().With(zap.String("iface", iface))
 		}
 		cfg = "/etc/wireguard/" + cfg + ".conf"
 		_, err = os.Stat(cfg)
@@ -53,17 +53,17 @@ func main() {
 			printHelp()
 		}
 	default:
-		logrus.WithError(err).Errorln("error while reading config file")
+		log.Error("error while reading config file", zap.Error(err))
 		printHelp()
 	}
 
 	b, err := ioutil.ReadFile(cfg)
 	if err != nil {
-		logrus.WithError(err).Fatalln("cannot read file")
+		log.Fatal("cannot read file", zap.Error(err))
 	}
 	c := &wgquick.Config{}
 	if err := c.UnmarshalText(b); err != nil {
-		logrus.WithError(err).Fatalln("cannot parse config file")
+		log.Fatal("cannot parse config file", zap.Error(err))
 	}
 
 	c.RouteProtocol = *protocol
@@ -72,17 +72,32 @@ func main() {
 	switch args[0] {
 	case "up":
 		if err := wgquick.Up(c, iface, log); err != nil {
-			logrus.WithError(err).Errorln("cannot up interface")
+			log.Error("cannot up interface", zap.Error(err))
+
 		}
 	case "down":
 		if err := wgquick.Down(c, iface, log); err != nil {
-			logrus.WithError(err).Errorln("cannot down interface")
+			log.Error("cannot down interface", zap.Error(err))
 		}
 	case "sync":
 		if err := wgquick.Sync(c, iface, log); err != nil {
-			logrus.WithError(err).Errorln("cannot sync interface")
+			log.Error("cannot sync interface", zap.Error(err))
 		}
 	default:
 		printHelp()
 	}
+}
+
+func setupLogger(verbose bool) {
+	cfg := zap.NewDevelopmentConfig()
+	if !verbose {
+		cfg.Level.SetLevel(zap.InfoLevel)
+	}
+	cfg.EncoderConfig.EncodeLevel = zapcore.CapitalColorLevelEncoder
+
+	logger, err := cfg.Build()
+	if err != nil {
+		panic(err)
+	}
+	zap.ReplaceGlobals(logger)
 }

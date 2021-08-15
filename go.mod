@@ -3,7 +3,7 @@ module github.com/aksdb/wg-quick-go
 go 1.16
 
 require (
-	github.com/sirupsen/logrus v1.4.2 // indirect
+	github.com/stretchr/testify v1.4.0
 	github.com/vishvananda/netlink v1.0.0
 	github.com/vishvananda/netns v0.0.0-20191106174202-0a2b9b5464df // indirect
 	go.uber.org/zap v1.13.0
