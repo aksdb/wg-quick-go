@@ -2,7 +2,7 @@ stages:
   - build
 go_build:
   stage: build
-  image: golang:1.12
+  image: golang:1.16
   variables:
     CGO_ENABLED: 0
   script:

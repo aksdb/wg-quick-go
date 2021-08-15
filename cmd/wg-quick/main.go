@@ -7,7 +7,7 @@ import (
 	"os"
 
 	"github.com/sirupsen/logrus"
-	"github.com/uinta-labs/wg-quick-go"
+	"github.com/aksdb/wg-quick-go"
 	"go.uber.org/zap"
 )
 
