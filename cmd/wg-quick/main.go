@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io/ioutil"
 	"os"
+	"path"
 
 	wgquick "github.com/aksdb/wg-quick-go"
 	"go.uber.org/zap"
@@ -22,6 +23,7 @@ func main() {
 	verbose := flag.Bool("v", false, "verbose")
 	protocol := flag.Int("route-protocol", 0, "route protocol to use for our routes")
 	metric := flag.Int("route-metric", 0, "route metric to use for our routes")
+	configDir := flag.String("config-dir", "/etc/wireguard", "directory the config files reside in")
 	flag.Parse()
 	args := flag.Args()
 	if len(args) != 2 {
@@ -46,7 +48,7 @@ func main() {
 			iface = cfg
 			log = zap.L().With(zap.String("iface", iface))
 		}
-		cfg = "/etc/wireguard/" + cfg + ".conf"
+		cfg = path.Join(*configDir, cfg+".conf")
 		_, err = os.Stat(cfg)
 		if err != nil {
 			log.Error("cannot find config file", zap.Error(err))
