@@ -3,10 +3,9 @@ module github.com/aksdb/wg-quick-go
 go 1.16
 
 require (
-	github.com/stretchr/testify v1.4.0
-	github.com/vishvananda/netlink v1.0.0
-	github.com/vishvananda/netns v0.0.0-20191106174202-0a2b9b5464df // indirect
-	go.uber.org/zap v1.13.0
-	golang.org/x/sys v0.0.0-20191206220618-eeba5f6aabab
-	golang.zx2c4.com/wireguard/wgctrl v0.0.0-20191205174707-786493d6718c
+	github.com/stretchr/testify v1.7.0
+	github.com/vishvananda/netlink v1.1.0
+	go.uber.org/zap v1.19.0
+	golang.org/x/sys v0.0.0-20210809222454-d867a43fc93e
+	golang.zx2c4.com/wireguard/wgctrl v0.0.0-20210803171230-4253848d036c
 )
