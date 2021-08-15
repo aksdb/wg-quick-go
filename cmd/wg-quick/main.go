@@ -31,12 +31,9 @@ func main() {
 	}
 
 	setupLogger(*verbose)
+	log := zap.L()
 
 	iface := flag.Lookup("iface").Value.String()
-	log := zap.L()
-	if iface != "" {
-		log = zap.L().With(zap.String("iface", iface))
-	}
 
 	cfg := args[1]
 
@@ -46,7 +43,6 @@ func main() {
 	case os.IsNotExist(err):
 		if iface == "" {
 			iface = cfg
-			log = zap.L().With(zap.String("iface", iface))
 		}
 		cfg = path.Join(*configDir, cfg+".conf")
 		_, err = os.Stat(cfg)
