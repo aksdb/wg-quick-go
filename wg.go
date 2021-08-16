@@ -109,9 +109,10 @@ func cleanupRules(link netlink.Link, logger *zap.Logger) error {
 	families := []int{unix.AF_INET, unix.AF_INET6}
 	rules := buildDefaultRules(&wgdev.FirewallMark, families)
 	for _, rule := range rules {
-		if err := netlink.RuleDel(rule); err != nil && !os.IsNotExist(err) {
-			logger.Error("cannot remove rule", zap.Error(err))
-			return err
+		if err := netlink.RuleDel(rule); err != nil {
+			if errNo, isSysErr := err.(syscall.Errno); !isSysErr || errNo != syscall.EAFNOSUPPORT {
+				logger.Warn("cannot remove rule", zap.Error(err))
+			}
 		}
 	}
 
