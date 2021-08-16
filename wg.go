@@ -72,6 +72,10 @@ func Down(cfg *Config, iface string, logger *zap.Logger) error {
 		log.Info("applied pre-down command")
 	}
 
+	if err := cleanupRules(link, logger); err != nil {
+		return err
+	}
+
 	if err := netlink.LinkDel(link); err != nil {
 		return err
 	}
@@ -82,6 +86,35 @@ func Down(cfg *Config, iface string, logger *zap.Logger) error {
 		}
 		log.Info("applied post-down command")
 	}
+	return nil
+}
+
+func cleanupRules(link netlink.Link, logger *zap.Logger) error {
+	cl, err := wgctrl.New()
+	if err != nil {
+		logger.Error("cannot get wireguard device", zap.Error(err))
+		return err
+	}
+
+	wgdev, err := cl.Device(link.Attrs().Name)
+	if err != nil {
+		logger.Error("cannot get wireguard device", zap.Error(err))
+		return err
+	}
+
+	if wgdev.FirewallMark <= 0 {
+		return nil
+	}
+
+	families := []int{unix.AF_INET, unix.AF_INET6}
+	rules := buildDefaultRules(&wgdev.FirewallMark, families)
+	for _, rule := range rules {
+		if err := netlink.RuleDel(rule); err != nil && !os.IsNotExist(err) {
+			logger.Error("cannot remove rule", zap.Error(err))
+			return err
+		}
+	}
+
 	return nil
 }
 
@@ -129,6 +162,25 @@ func Sync(cfg *Config, iface string, logger *zap.Logger) error {
 	}
 	log.Info("synced link")
 
+	handlesDefaultRoute := false
+	var managedRoutes []net.IPNet
+	for _, peer := range cfg.Peers {
+		for _, rt := range peer.AllowedIPs {
+			managedRoutes = append(managedRoutes, rt)
+			if maskIsDefault(rt.Mask) {
+				handlesDefaultRoute = true
+			}
+		}
+	}
+
+	if handlesDefaultRoute {
+		if defaultTable, err := determineDefaultTable(link, logger); err != nil {
+			return err
+		} else {
+			cfg.FirewallMark = &defaultTable
+		}
+	}
+
 	if err := SyncWireguardDevice(cfg, link, log); err != nil {
 		log.Error("cannot sync wireguard link", zap.Error(err))
 		return err
@@ -141,12 +193,6 @@ func Sync(cfg *Config, iface string, logger *zap.Logger) error {
 	}
 	log.Info("synced addresss")
 
-	var managedRoutes []net.IPNet
-	for _, peer := range cfg.Peers {
-		for _, rt := range peer.AllowedIPs {
-			managedRoutes = append(managedRoutes, rt)
-		}
-	}
 	if err := SyncRoutes(cfg, link, managedRoutes, log); err != nil {
 		log.Error("cannot sync routes", zap.Error(err))
 		return err
@@ -284,14 +330,21 @@ func SyncRoutes(cfg *Config, link netlink.Link, managedRoutes []net.IPNet, logge
 		logger.Error("cannot read existing routes", zap.Error(err))
 		return err
 	}
+
 	for _, rt := range managedRoutes {
 		rt := rt // make copy
 		logger.With(zap.String("dst", rt.String())).Debug("managing route")
 
+		table := cfg.Table
+
+		if maskIsDefault(rt.Mask) && cfg.FirewallMark != nil {
+			table = *cfg.FirewallMark
+		}
+
 		nrt := netlink.Route{
 			LinkIndex: link.Attrs().Index,
 			Dst:       &rt,
-			Table:     cfg.Table,
+			Table:     table,
 			Protocol:  cfg.RouteProtocol,
 			Priority:  cfg.RouteMetric}
 		fillRouteDefaults(&nrt)
@@ -313,6 +366,14 @@ func SyncRoutes(cfg *Config, link netlink.Link, managedRoutes []net.IPNet, logge
 				return err
 			}
 			log.Info("route added/replaced")
+		}
+	}
+
+	defaultRules := determineDefaultRules(cfg.FirewallMark, managedRoutes)
+	for _, rule := range defaultRules {
+		if err := netlink.RuleAdd(rule); err != nil {
+			logger.Error("cannot add rule", zap.Error(err))
+			return err
 		}
 	}
 
@@ -356,4 +417,88 @@ func SyncRoutes(cfg *Config, link netlink.Link, managedRoutes []net.IPNet, logge
 	}
 
 	return nil
+}
+
+func maskIsDefault(mask net.IPMask) bool {
+	for _, b := range mask {
+		if b != 0 {
+			return false
+		}
+	}
+	return true
+}
+
+func determineDefaultTable(link netlink.Link, logger *zap.Logger) (int, error) {
+	cl, err := wgctrl.New()
+	if err != nil {
+		logger.Error("cannot setup wireguard device", zap.Error(err))
+		return 0, err
+	}
+	if wgdev, err := cl.Device(link.Attrs().Name); err == nil && wgdev != nil && wgdev.FirewallMark > 0 {
+		return wgdev.FirewallMark, nil
+	}
+
+	allRoutes, err := netlink.RouteList(nil, 0)
+	if err != nil {
+		logger.Error("cannot read existing routes", zap.Error(err))
+		return 0, err
+	}
+
+	maxTable := 51820 - 1
+	for _, rt := range allRoutes {
+		if rt.Table > maxTable {
+			maxTable = rt.Table
+		}
+	}
+	defaultTable := maxTable + 1
+	logger.Debug("use defaultTable", zap.Int("defaultTable", defaultTable))
+	return defaultTable, nil
+}
+
+func determineDefaultRules(table *int, routes []net.IPNet) []*netlink.Rule {
+	if table == nil {
+		return nil
+	}
+
+	hasV4default := false
+	hasV6default := false
+
+	for _, rt := range routes {
+		if maskIsDefault(rt.Mask) {
+			if rt.IP.To4() != nil {
+				hasV4default = true
+			} else if rt.IP.To16() != nil {
+				hasV6default = true
+			}
+		}
+	}
+
+	var families []int
+	if hasV4default {
+		families = append(families, unix.AF_INET)
+	}
+	if hasV6default {
+		families = append(families, unix.AF_INET6)
+	}
+
+	return buildDefaultRules(table, families)
+}
+
+func buildDefaultRules(table *int, families []int) []*netlink.Rule {
+	var rules []*netlink.Rule
+	for _, family := range families {
+		rule := netlink.NewRule()
+		rule.Family = family
+		rule.Invert = true
+		rule.Mark = *table
+		rule.Table = *table
+		rules = append(rules, rule)
+
+		rule = netlink.NewRule()
+		rule.Family = family
+		rule.Table = unix.RT_CLASS_MAIN
+		rule.SuppressPrefixlen = 0
+		rules = append(rules, rule)
+	}
+	return rules
 }
